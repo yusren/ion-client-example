@@ -12,7 +12,7 @@ class ExampleTest extends TestCase
             'https://ion.palmco.id/auth/login?client_key=%s&client_identifier=%s&redirect_uri=%s',
             urlencode(config('ion-client.client_id')),
             urlencode(config('ion-client.client_secret')),
-            config('app.url') . '/auth/callback'
+            url('/auth/callback')
         );
     }
 
