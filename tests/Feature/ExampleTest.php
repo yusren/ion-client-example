@@ -2,18 +2,15 @@
 
 namespace Tests\Feature;
 
+use Ptpn\IonClient\IonClient;
 use Tests\TestCase;
 
 class ExampleTest extends TestCase
 {
     private function expectedLoginUrl(): string
     {
-        return sprintf(
-            'https://ion.palmco.id/auth/login?client_key=%s&client_identifier=%s&redirect_uri=%s',
-            urlencode(config('ion-client.client_id')),
-            urlencode(config('ion-client.client_secret')),
-            url('/auth/callback')
-        );
+        return app(IonClient::class)
+            ->getLoginUrl(redirectUri: url('/auth/callback'));
     }
 
     public function test_the_application_redirects_to_ion_login_when_not_authenticated(): void

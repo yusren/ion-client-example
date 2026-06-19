@@ -17,9 +17,10 @@ Official PHP/Laravel client SDK untuk mengonsumsi API **ION SSO v2**.
 
 ## Instalasi
 
-Install package melalui Composer:
+Pada project ini package di-install dari path lokal:
 
 ```bash
+composer config repositories.ion-client path /home/yusren/Documents/PHP Projects/ion-client
 composer require ptpn/ion-client
 ```
 
@@ -39,13 +40,13 @@ ION_ENABLED=true
 
 # Konfigurasi API ION
 ION_BASE_URL=https://ion.palmco.id/api/v2
-ION_CLIENT_ID=your-client-id
-ION_CLIENT_SECRET=your-client-secret
+ION_CLIENT_KEY=your-client-key
+ION_CLIENT_IDENTIFIER=your-client-secret
 ION_TIMEOUT=30
 ION_VERIFY_SSL=true
 
 # URL frontend yang menjadi tujuan redirect setelah SSO callback
-ION_FRONTEND_URL=http://localhost:9000
+ION_FRONTEND_URL=http://localhost:5173
 
 # Pengaturan cookie session setelah callback SSO
 ION_COOKIE_NAME=ion_session
@@ -56,7 +57,24 @@ ION_COOKIE_HTTP_ONLY=true
 ION_COOKIE_SAMESITE=Lax
 ```
 
+> **Penting:** `ION_CLIENT_IDENTIFIER` bersifat rahasia dan hanya digunakan server-side. Jangan pernah menuliskannya di URL, view, log, atau response.
+
 ## Penggunaan
+
+### SSO Login Redirect
+
+Untuk mengarahkan user ke halaman login ION SSO, gunakan `IonClient::getLoginUrl()`. URL yang dihasilkan hanya mengandung `client_key` dan `redirect_uri`; `client_identifier` tidak akan terexpose.
+
+```php
+use Illuminate\Support\Facades\Route;
+use Ptpn\IonClient\IonClient;
+
+Route::get('/auth/login', function () {
+    return redirect(
+        app(IonClient::class)->getLoginUrl(redirectUri: url('/auth/callback'))
+    );
+});
+```
 
 ### SSO Callback
 
@@ -94,6 +112,69 @@ Route::get('/auth/callback', function (\Illuminate\Http\Request $request) {
 ```
 
 > **Penting:** session lokal dibuat dengan ID yang sama dengan SSO session ID. Hal ini diperlukan agar webhook logout dari SSO dapat menghapus session lokal berdasarkan ID tersebut.
+
+### Logout
+
+Aplikasi dapat logout user dari ION SSO melalui endpoint `POST /api/logout`. Endpoint ini akan:
+
+1. Memanggil `IonClient::logout($sessionId)` ke ION.
+2. Menghancurkan session lokal Laravel.
+3. Menghapus cookie `ion_session`.
+4. Mengembalikan JSON success.
+
+```php
+use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Session;
+use IonClient;
+
+Route::post('/api/logout', function () {
+    $sessionId = Session::get('sso_session_id');
+
+    if ($sessionId) {
+        try {
+            IonClient::logout($sessionId);
+        } catch (\Throwable $e) {
+            // Tetap lanjutkan membersihkan session lokal walau ION gagal
+        }
+    }
+
+    Session::flush();
+    Session::invalidate();
+
+    $cookieConfig = config('ion-client.cookie');
+
+    return response()->json([
+        'success' => true,
+        'message' => 'Logged out successfully',
+    ])->withCookie(cookie(
+        $cookieConfig['name'],
+        null,
+        -1,
+        '/',
+        $cookieConfig['domain'],
+        $cookieConfig['secure'],
+        $cookieConfig['http_only'],
+        false,
+        $cookieConfig['same_site']
+    ));
+});
+```
+
+### Back-Channel Logout Webhook
+
+Project ini juga menyediakan handler untuk webhook logout dari ION SSO:
+
+- **Method:** `POST`
+- **Path:** `/api/auth/webhook/logout`
+- **Body:** `{ "logout_token": "<SSO Session ID>", "event": "<optional>" }`
+
+Handler akan:
+
+1. Membaca session lokal berdasarkan `logout_token`.
+2. Menolak request dengan `401` jika session tidak ditemukan atau tidak aktif.
+3. Menghapus session lokal dari store.
+4. Broadcast event `CheckAuthEvent` ke channel `session.{sessionID}` agar frontend yang terkoneksi dapat memvalidasi ulang autentikasi.
+5. Mengembalikan `200 { "status": "ok" }`.
 
 ### Menggunakan Facade
 
@@ -151,6 +232,9 @@ class AuthController extends Controller
 
 | Method | Endpoint | Deskripsi |
 |--------|----------|-----------|
+| Method | Endpoint | Deskripsi |
+|--------|----------|-----------|
+| `getLoginUrl($redirectUri, $extra)` | — | Membangun URL redirect login ION SSO (Step 1). |
 | `checkSession($sessionId)` | `GET /auth/check-session` | Cek apakah session SSO masih aktif. |
 | `verify($code)` | `POST /auth/verify` | Tukar auth code menjadi session ID + data user. |
 | `getSessionFullInfo($sessionId)` | `POST /client/session/full-info` | Ambil data session lengkap. |
@@ -161,8 +245,8 @@ class AuthController extends Controller
 
 Setiap request akan otomatis menyertakan header wajib:
 
-- `X-Client-ID`
-- `X-Client-Secret`
+- `X-Client-ID` — berasal dari `client_key`.
+- `X-Client-Secret` — berasal dari `client_identifier`.
 - `X-Timestamp`
 
 ## Struktur Data SSO
@@ -248,19 +332,12 @@ Method `getSessionFullInfo($sessionId)` mengembalikan data user lengkap:
 }
 ```
 
-### 3. Data User untuk Frontend
+### 3. Endpoint `/api/me`
 
-Saat mengirim data user ke frontend, sebaiknya:
-
-- **Sembunyikan ID integer asli** (`company_id`, `unit_id`, `department_id`, `position_id`). Gunakan versi hash-nya.
-- **Masking data sensitif** seperti `username`, `nik_sap`, `telegram_id`, `cellphone_number` sebelum dikirim.
-- **Field `recipient_id`** tetap dikirim sebagai hash.
-
-Contoh response ke frontend:
+Endpoint ini mengembalikan status autentikasi user berdasarkan session lokal:
 
 ```json
 {
-    "message": "Authenticated",
     "authenticated": true,
     "data": {
         "session_id": "sso-session-abc123",
@@ -278,14 +355,22 @@ Contoh response ke frontend:
         "company_name": "PT Perkebunan Nusantara IV",
         "gender": true,
         "telegram_id": "",
-        "cellphone_number": "08*****7890",
+        "cellphone_number": "081234567890",
         "recipient_id": "xyz789",
-        "company_id": "hash-company-1",
-        "unit_id": "hash-unit-1",
-        "department_id": "hash-dept-1",
-        "position_id": "hash-position-1",
+        "company_id": 2,
+        "unit_id": 2,
+        "department_id": 53,
+        "position_id": 1631,
         "level_elemen": 1
     }
+}
+```
+
+Jika user belum login:
+
+```json
+{
+    "authenticated": false
 }
 ```
 
