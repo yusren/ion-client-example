@@ -36,7 +36,7 @@ SESSION_ENCRYPT=false
 
 # --- ION SSO API CONFIG ---
 ION_ENABLED=true
-ION_BASE_URL=https://ion.palmco.id/api/v2
+ION_BASE_URL=https://ion.palmco.id
 ION_CLIENT_ID=iniID
 ION_CLIENT_SECRET=iniSecret
 ION_TIMEOUT=30
