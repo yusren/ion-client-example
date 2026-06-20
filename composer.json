@@ -9,7 +9,7 @@
         "php": "^8.2",
         "laravel/framework": "^12.0",
         "laravel/tinker": "^2.10.1",
-        "ptpn/ion-client": "dev-main"
+        "ptpn/ion-client": "^1.0.4"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
@@ -85,8 +85,8 @@
     "minimum-stability": "dev",
     "prefer-stable": true,
     "repositories": [{
-        "name": "ion-client",
+        "name": "ion-client-example",
         "type": "path",
-        "url": "/home/yusren/Documents/PHP Projects/ion-client"
+        "url": "/home/yusren/Documents/PHP Projects/ion-client-example"
     }]
 }
